@@ -1,10 +1,135 @@
 import System.Environment
 import System.Process
+import qualified Data.ByteString as BS
+--import System.Entropy
 
+type ByteString = BS.ByteString
+
+data Binary = Zero | One
+
+-- Converts a binary string into an integer
+-- NEEDS TO BE SWAPPED IN THE CASE THAT THE EXPANSIATION IS THE WRONG WAY ROUND
+bs2Int :: [Binary] -> Integer
+bs2Int = f {- . reverse -} where
+  f :: [Binary] -> Integer
+  f []        = 0
+  f (One:bs)  = 1 + (f bs)*2
+  f (Zero:bs) = (f bs)*2
+
+-- Interacts with an executable via the string input
 interactExe :: FilePath -> String -> IO String
 interactExe f s = do (_,c,s) <- (readProcessWithExitCode f [] (s ++ "^C\n"))
                      return c
 
+messageSamples = [2,6..3000]
+
+-- Queries a file with the given string to recieve a list of the outputs
+queryFile :: FilePath -> String -> IO [(Integer,Integer)]
+queryFile fp msgs = do strVals <- interactExe fp msgs
+                       return (undoD strVals)
+
+-- Used to convert a list of integer inputs into the string used for file querys
+valsForQuery :: [Integer] -> String
+valsForQuery msgs = (concat ((map ((++ "\n") . toHex)) msgs))
+
+-- Formats and groups the output from an exectuable file into correct format
+-- recieved ouptput  time    value
+undoD :: String -> [(Integer,Integer)]
+undoD str = (reverse . tail . snd) (foldl (flip f) (True,[(0,0)]) str) where
+  f :: Char -> (Bool,[(Integer,Integer)]) -> (Bool,[(Integer,Integer)])
+  f '\n' (True, (time,value):as)  = (False,(time,value):as)
+  f '\n' (False,as)               = (True, (0,0):as)
+  f c    (True,  (time,value):as) = (True,((time*10) + (read [c]), value):as)
+  f c    (False, (time,value):as) = (False,(time,(value*16) + (deHexChar c)):as)
+
+-- A fail that needs to be updated to generate random numbers for Ms
+randomNum :: IO ByteString
+randomNum = do BS.readFile "/dev/urandom"
+
+-- Conducts a time attack against the given executable files
+-- meaning :: ${User}.D   ${User}.R   N          E          Current D    M          .D: time    result      IO Actual D, File interactions
+timeAttack :: FilePath -> FilePath -> Integer -> Integer -> [Binary] -> [Integer] -> [(Integer,Integer)] -> IO (Integer,Integer)
+timeAttack d r n e bs ms tvs = do rtvs <- queryFile r (genRQueries ms n (bs2Int bs))
+                                  mis  <- return (calcI ms rtvs)
+                                  (increaseMs,dist) <- testSize mis
+                                  (ms2, rtvs2, mis2, tvs2) <- genMoreMs increaseMs dist
+                                  indicator <- meanFTest (ms ++ ms2) (mis ++ mis2) (tvs ++ tvs2)
+                                  (test,correctD) <- return (compDif n e (indicator:bs)) --compDif ms (indicator:bs) tvs n
+                                  if test
+                                    then return (correctD, (fromIntegral . length) (tvs ++ tvs2))
+                                    else timeAttack d r n e (indicator:bs) (ms ++ ms2) (tvs ++ tvs2)
+
+-- Compares the difference between the conisdered d and the real thing
+compDif :: Integer -> Integer -> [Binary] -> (Bool,Integer)
+compDif n e bs | f n e d1  = (True, d1)
+               | f n e d2  = (True, d2)
+               | otherwise = (False, 0) where
+                 d1 = bs2Int (One:bs)
+                 d2 = bs2Int (Zero:bs)
+                 f :: Integer -> Integer -> Integer -> Bool
+                 f n e d = (mod (d*e) n) == 1
+{-
+compDif :: [Integer] -> [Binary] -> [(Integer,Integer)] -> Integer -> IO (Bool,[Binary])
+compDif as d cs n = do b1 <- (f as (bs2Int (One:d)) cs n 2)
+                       if b1 then return (b1,(One:d))
+                       b2 <- (f as (bs2Int (Zero:d)) cs n 2)
+                       if b2 then return (b2,Zero:d)
+                       return False where
+  f :: [Integer] -> Integer -> [(Integer,Integer)] -> Integer -> Integer -> IO Bool
+  f [] d []
+  f ms d cs n taker = do
+    rtvs <- queryFile r (genRQueries ms1 n d)
+    cont <- g rtvs cs1
+    if cont
+      then f ms2 d cs2 n (taker*2)
+      else return False
+  g :: [(Integer,Integer)] -> [(Integer,Integer)] -> Bool
+  g [] _ = True
+  g _ [] = True
+  g ((_,a):as) ((_,b):bs) | a == b    = g as bs
+                          | otherwise = False
+  (cs1,cs2) = splitAt taker cs
+  (ms1,ms2) = splitAt taker ms
+-}
+
+-- Checks the Fi values and their means to find out what the kth bit is
+meanFTest :: [Integer] -> [(Binary,Binary)] -> [(Integer,Integer)] -> IO Binary
+meanFTest ms mis tvs = undefined
+
+-- Tests the relevant values of the list to see if a mean is reasonable
+-- it also provides outputs for i in position ((1,2),(3,4)) to know what needs
+-- to be updated
+testSize :: [(Binary,Binary)] -> IO (Bool,((Integer,Integer),(Integer,Integer)))
+testSize as = (test v, v) where
+  v :: ((Integer,Integer),(Integer,Integer))
+  v =  foldr f ((0,0),(0,0)) as
+  test :: ((Integer,Integer),(Integer,Integer)) -> Bool
+  test ((a,b),(c,d)) | a < lim   = False
+                     | b < lim   = False
+                     | c < lim   = False
+                     | d < lim   = False
+                     | otherwise = True
+  lim = 5
+  -- MEAN LIMIT
+
+-- Generates more Ms such that the mean becomes reasonable
+genMoreMs :: Bool -> ((Integer,Integer),(Integer,Integer)) -> IO ([Integer],[(Integer,Integer)],[(Binary,Binary)],[(Integer,Integer)])
+genMoreMs = undefined
+
+-- Queries the R exectuable file
+genRQueries :: [Integer] -> Integer -> Integer -> String
+genRQueries ms n bs = undefined
+
+-- Calculates whether the m value should belong to group 1, 2, 3 or 4
+calcI :: [Integer] -> [(Integer,Integer)] -> [(Binary,Binary)]
+calcI [] []                     = []
+calcI [] xs                     = undefined
+calcI xs []                     = undefined
+calcI (m:ms) ((time,mTemp):rts) = (f m mTemp):(calcI ms rts) where
+  f :: Integer -> Integer -> (Binary,Binary)
+  f m mTemp = undefined
+
+-- Main exectuable that is being run
 main :: IO ()
 main = do (dTemp:(conf:args)) <- getArgs
           (n,e) <- getConf conf
@@ -13,12 +138,16 @@ main = do (dTemp:(conf:args)) <- getArgs
           out <- interactExe d "AB3425\n"
           putStr (toHex n ++ "\n")
           putStr (toHex e ++ "\n")
+          --rand <- getEntropy 10
+          --putStr (show rand)
           return ()
 
+-- gets the config information from the given file
 getConf :: FilePath -> IO (Integer,Integer)
 getConf f = do s <- readFile f
                return (seperate s)
 
+-- Used to split a string by the new line into two seperate values
 seperate :: String -> (Integer,Integer)
 seperate s = f s [] where
     f :: String -> String -> (Integer,Integer)
@@ -39,24 +168,25 @@ deHex as = f (reverse as) where
     f :: String -> Integer
     f [] = 0
     f ('\n':as) = f as
-    f (a:as) = g a + 16*(f as)
-    g :: Char -> Integer
-    g '0' = 0
-    g '1' = 1
-    g '2' = 2
-    g '3' = 3
-    g '4' = 4
-    g '5' = 5
-    g '6' = 6
-    g '7' = 7
-    g '8' = 8
-    g '9' = 9
-    g 'A' = 10
-    g 'B' = 11
-    g 'C' = 12
-    g 'D' = 13
-    g 'E' = 14
-    g 'F' = 15
+    f (a:as) = deHexChar a + 16*(f as)
+
+deHexChar :: Char -> Integer
+deHexChar '0' = 0
+deHexChar '1' = 1
+deHexChar '2' = 2
+deHexChar '3' = 3
+deHexChar '4' = 4
+deHexChar '5' = 5
+deHexChar '6' = 6
+deHexChar '7' = 7
+deHexChar '8' = 8
+deHexChar '9' = 9
+deHexChar 'A' = 10
+deHexChar 'B' = 11
+deHexChar 'C' = 12
+deHexChar 'D' = 13
+deHexChar 'E' = 14
+deHexChar 'F' = 15
 
 toHex :: Integer -> String
 toHex n = reverse (toHex' n)
