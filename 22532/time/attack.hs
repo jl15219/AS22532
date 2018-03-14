@@ -7,6 +7,79 @@ type ByteString = BS.ByteString
 
 data Binary = Zero | One
 
+--              n          x
+euclidsInv :: Integer -> Integer -> Integer
+euclidsInv n m' = (fst . snd) (foldr f (g (last l)) (init l)) where
+  m = mod m' n
+  l = (euclidsInv' n m)
+  g :: (Integer,(Integer,Integer),Integer) -> ((Integer,Integer),(Integer,Integer))
+  g (n,(d,m),one) | one == 1 = ((1,n),(-d,m))
+                  | otherwise = undefined
+  f :: (Integer,(Integer,Integer),Integer) -> ((Integer,Integer),(Integer,Integer)) -> ((Integer,Integer),(Integer,Integer))
+  f (n,(d,m),r) ((t,o),(i,j)) = ((i,n),(t+i*((-1)*d),o))
+
+euclidsInv' :: Integer -> Integer -> [(Integer,(Integer,Integer),Integer)]
+euclidsInv' n m | mod n m == 1 = [(n,(div n m,m), 1)]
+                | otherwise    = (n,(div n m,m),mod n m):(euclidsInv' m (mod n m))
+
+
+znAdd :: Integer -> Integer -> Integer -> Integer
+znAdd x y n | t > n = t - n
+            | otherwise = t where
+              t = x + y
+
+znSub :: Integer -> Integer -> Integer -> Integer
+znSub x y n | y > x = n - (y - x)
+            | otherwise = x - y
+
+montExpRed :: Integer -> [Binary] -> Integer -> Integer -> (Integer,Bool)
+montExpRed x y n b = (rs',red) where
+  (rs',_) = montMulRed res 1 n omega b
+  (v,red) = montMulRed res res n omega b
+  res     = montExp' xp y n rho omega b tp
+  omega   = euclidsInv rho (n*(-1))
+  rho     = rhoFunc b b n
+  rho2    = mod (rho^2) n
+  (tp,_)  = montMulRed 1 rho2 n omega b
+  (xp,_)  = montMulRed x rho2 n omega b
+  rhoFunc :: Integer -> Integer -> Integer -> Integer
+  rhoFunc b bk n | bk > n    = bk
+                 | otherwise = rhoFunc b (b*bk) n
+
+montMulTest :: Integer -> Integer -> Integer -> Integer -> Integer
+montMulTest x y n b = result where
+  (result,_) = montMulRed v 1 n omega b
+  (v,_)      = montMulRed xp yp n omega b
+  omega      = mod (euclidsInv rho (n*(-1))) rho
+  rho        = rhoFunc b b n
+  rho2       = mod (rho^2) n
+  (yp,_)     = montMulRed y rho2 n omega b
+  (xp,_)     = montMulRed x rho2 n omega b
+  rhoFunc :: Integer -> Integer -> Integer -> Integer
+  rhoFunc b bk n | bk > n    = bk
+                 | otherwise = rhoFunc b (b*bk) n
+
+montExp' :: Integer -> [Binary] -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer
+montExp' x [] n rho omega b t     = t
+montExp' x (One:ys)  n rho omega b t = fst (montMulRed (fst (montMulRed t t n omega b)) x n omega b)
+montExp' x (Zero:ys) n rho omega b t = (fst (montMulRed t t n omega b))
+
+montMulRed :: Integer -> Integer -> Integer -> Integer -> Integer -> (Integer,Bool)
+montMulRed x y n omega b | res > n   = (res - n, True)
+                         | otherwise = (res,    False)
+                       where
+                         res = montMul' x y n omega b 0 (ceiling (logBase (fromIntegral b) (fromIntegral n))) 0
+
+montMul' :: Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer
+montMul' x y n omega b i ln r | i == ln   = r
+                              | otherwise = montMul' x y n omega b (i+1) ln r_new
+                          where
+                            r_new = div (r + y_i*x + u_i * n) b
+                            u_i   = ((r_0 + y_i*x_0) * omega)
+                            x_0   = mod x b
+                            y_i   = mod (div y b^i) b
+                            r_0   = mod r b
+
 -- Converts a binary string into an integer
 -- NEEDS TO BE SWAPPED IN THE CASE THAT THE EXPANSIATION IS THE WRONG WAY ROUND
 bs2Int :: [Binary] -> Integer
@@ -100,9 +173,14 @@ meanFTest ms mis tvs = undefined
 -- it also provides outputs for i in position ((1,2),(3,4)) to know what needs
 -- to be updated
 testSize :: [(Binary,Binary)] -> IO (Bool,((Integer,Integer),(Integer,Integer)))
-testSize as = (test v, v) where
+testSize as = return (test v, v) where
   v :: ((Integer,Integer),(Integer,Integer))
   v =  foldr f ((0,0),(0,0)) as
+  f :: (Binary,Binary) -> ((Integer,Integer),(Integer,Integer)) -> ((Integer,Integer),(Integer,Integer))
+  f (Zero,Zero) ((a,b),(c,d)) = ((a + 1,b),(c,d))
+  f (Zero, One) ((a,b),(c,d)) = ((a,b + 1),(c,d))
+  f (One, Zero) ((a,b),(c,d)) = ((a,b),(c + 1,d))
+  f (One,  One) ((a,b),(c,d)) = ((a,b),(c,d + 1))
   test :: ((Integer,Integer),(Integer,Integer)) -> Bool
   test ((a,b),(c,d)) | a < lim   = False
                      | b < lim   = False
