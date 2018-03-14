@@ -50,9 +50,11 @@ montMulTest :: Integer -> Integer -> Integer -> Integer -> Integer
 montMulTest x y n b = result where
   (result,_) = montMulRed v 1 n omega b
   (v,_)      = montMulRed xp yp n omega b
-  omega      = mod (euclidsInv rho (n*(-1))) rho
+  omega      = (euclidsInv rho (rho - n))
   rho        = rhoFunc b b n
   rho2       = mod (rho^2) n
+  --xp = mod (x*rho) n
+  --yp = mod (y*rho) n
   (yp,_)     = montMulRed y rho2 n omega b
   (xp,_)     = montMulRed x rho2 n omega b
   rhoFunc :: Integer -> Integer -> Integer -> Integer
@@ -61,8 +63,14 @@ montMulTest x y n b = result where
 
 montExp' :: Integer -> [Binary] -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer
 montExp' x [] n rho omega b t     = t
-montExp' x (One:ys)  n rho omega b t = fst (montMulRed (fst (montMulRed t t n omega b)) x n omega b)
-montExp' x (Zero:ys) n rho omega b t = (fst (montMulRed t t n omega b))
+montExp' x (One:ys)  n rho omega b t = montExp' x ys n rho omega b (fst (montMulRed (fst (montMulRed t t n omega b)) x n omega b))
+montExp' x (Zero:ys) n rho omega b t = montExp' x ys n rho omega b (fst (montMulRed t t n omega b))
+
+montExpStep :: Integer -> Binary -> Integer -> Integer -> Integer -> Integer -> Integer -> (Integer,Bool)
+montExpStep x One n rho omega b t = (res,red) where
+    res         = fst (montMulRed temp x n omega b)
+    (temp, red) = montMulRed t t n omega b
+montExpStep x Zero n rho omega b t = montMulRed t t n omega b
 
 montMulRed :: Integer -> Integer -> Integer -> Integer -> Integer -> (Integer,Bool)
 montMulRed x y n omega b | res > n   = (res - n, True)
@@ -70,15 +78,71 @@ montMulRed x y n omega b | res > n   = (res - n, True)
                        where
                          res = montMul' x y n omega b 0 (ceiling (logBase (fromIntegral b) (fromIntegral n))) 0
 
+--for (int i = 0; i < j; i++) {
+--  grabBits(r_0,r,k,0);
+--  grabBits(x_0,x,k,0);
+--  grabBits(y_i,y,k,i);
+
+--  mpz_mul(u,y_i,x_0);
+--  mpz_add(u,r_0,u);
+--  mpz_mul(u,u,w);
+--  mpz_mod(u,u,bZ);
+
+--  mpz_mul(t0,y_i,x);
+--  mpz_mul(t1,u,n);
+--  mpz_add(t1,t0,t1);
+--  mpz_add(t1,r,t1);
+--  mpz_fdiv_q_2exp(r,t1,k);
+--}
+
+--if (mpz_cmp(r,n) >= 0) {
+--  mpz_sub(r,r,n);
+--}
+
 montMul' :: Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer
 montMul' x y n omega b i ln r | i == ln   = r
                               | otherwise = montMul' x y n omega b (i+1) ln r_new
                           where
                             r_new = div (r + y_i*x + u_i * n) b
-                            u_i   = ((r_0 + y_i*x_0) * omega)
+                            u_i   = mod ((r_0 + y_i*x_0) * omega) b
                             x_0   = mod x b
-                            y_i   = mod (div y b^i) b
+                            y_i   = mod (div y (b^i)) b
                             r_0   = mod r b
+
+montMul'' :: [Integer] -> [Integer] -> Integer -> Integer -> Integer -> Integer -> Integer -> [Integer] -> [Integer]
+montMul'' x y n omega b i ln r | i == ln = r
+                               | otherwise = montMul'' x y n omega b (i+1) ln r_new
+                        where
+                            r_new = tail (padAdd (padAdd r (padMul x y_i b) b) (bitSep (u_i * n) b) b)
+                            u_i   = mod ((r_0 + y_i*x_0) * omega) b
+                            x_0   = head x
+                            y_i   = y !! (fromIntegral i)
+                            r_0   = head r
+
+bitSep :: Integer -> Integer -> [Integer]
+bitSep = f where
+    f :: Integer -> Integer -> [Integer]
+    f n b = (mod n b):(f (div n b) b)
+
+padAdd :: [Integer] -> [Integer] -> Integer -> [Integer]
+padAdd x y b = padAdd' x y b 0 where
+    padAdd' :: [Integer] -> [Integer] -> Integer -> Integer -> [Integer]
+    padAdd' [] ys b c = padAdd' [0] ys b c
+    padAdd' xs [] b c = padAdd' xs [0] b c
+    padAdd' (x:xs) (y:ys) b c | s > b     = (s - b):(padAdd' xs ys b 1)
+                              | otherwise = s:(padAdd' xs ys b 0)
+                                where s = x + y + c
+
+padMul :: [Integer] -> Integer -> Integer -> [Integer]
+padMul x 1 b = x
+padMul x e b | mod e 2 == 1 = padAdd x (padMul x (e-1) b) b
+             | otherwise    = padAdd (padMul x (div e 2) b) (padMul x (div e 2) b) b
+
+fastModExp :: Integer -> Integer -> Integer -> Integer
+fastModExp x 1 n = mod x n
+fastModExp x e n | mod e 2 == 1 = mod (fastModExp x (e-1) n) n
+                 | otherwise    = mod ((fastModExp x (div e 2) n)^2) n
+
 
 -- Converts a binary string into an integer
 -- NEEDS TO BE SWAPPED IN THE CASE THAT THE EXPANSIATION IS THE WRONG WAY ROUND
@@ -127,7 +191,9 @@ timeAttack d r n e bs ms tvs = do rtvs <- queryFile r (genRQueries ms n (bs2Int 
                                   (increaseMs,dist) <- testSize mis
                                   (ms2, rtvs2, mis2, tvs2) <- genMoreMs increaseMs dist
                                   indicator <- meanFTest (ms ++ ms2) (mis ++ mis2) (tvs ++ tvs2)
-                                  (test,correctD) <- return (compDif n e (indicator:bs)) --compDif ms (indicator:bs) tvs n
+                                  if (indicator == Nothing)
+                                      then return undefined
+                                      else (test,correctD) <- return (compDif n e (indicator:bs)) --compDif ms (indicator:bs) tvs n
                                   if test
                                     then return (correctD, (fromIntegral . length) (tvs ++ tvs2))
                                     else timeAttack d r n e (indicator:bs) (ms ++ ms2) (tvs ++ tvs2)
@@ -140,7 +206,7 @@ compDif n e bs | f n e d1  = (True, d1)
                  d1 = bs2Int (One:bs)
                  d2 = bs2Int (Zero:bs)
                  f :: Integer -> Integer -> Integer -> Bool
-                 f n e d = (mod (d*e) n) == 1
+                 f n e d = undefined
 {-
 compDif :: [Integer] -> [Binary] -> [(Integer,Integer)] -> Integer -> IO (Bool,[Binary])
 compDif as d cs n = do b1 <- (f as (bs2Int (One:d)) cs n 2)
@@ -166,8 +232,26 @@ compDif as d cs n = do b1 <- (f as (bs2Int (One:d)) cs n 2)
 -}
 
 -- Checks the Fi values and their means to find out what the kth bit is
-meanFTest :: [Integer] -> [(Binary,Binary)] -> [(Integer,Integer)] -> IO Binary
-meanFTest ms mis tvs = undefined
+--                                                time  , result
+meanFTest :: [Integer] -> [(Binary,Binary)] -> [(Integer,Integer)] -> IO (Maybe Binary)
+meanFTest ms mis tvs = undefined where
+    ((as,bs),(cs,ds)) = f mis tvs
+    t1 = average as - average bs
+    t2 = average cs - average ds
+    g :: Float -> Float -> Maybe Binary
+    g t1 t2 | t1 > t2 = Just One
+            | t2 > t1 = Just Zero
+    average :: [Integer] -> Float
+    average as = (fromIntegral (product as)) / (fromIntegral (length as))
+    f :: [(Binary,Binary)] -> [(Integer,Integer)] -> (([Integer],[Integer]),([Integer],[Integer]))
+    f ((Zero,Zero):bs) ((t,_):ts) = (((t:a),b),(c,d)) where
+        ((a,b),(c,d)) = f bs ts
+    f ((Zero, One):bs) ((t,_):ts) = ((a,(t:b)),(c,d)) where
+        ((a,b),(c,d)) = f bs ts
+    f ((One, Zero):bs) ((t,_):ts) = ((a,b),((t:c),d)) where
+        ((a,b),(c,d)) = f bs ts
+    f ((One,  One):bs) ((t,_):ts) = ((a,b),(c,(t:d))) where
+        ((a,b),(c,d)) = f bs ts
 
 -- Tests the relevant values of the list to see if a mean is reasonable
 -- it also provides outputs for i in position ((1,2),(3,4)) to know what needs

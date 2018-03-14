@@ -5,31 +5,37 @@ type Info = (Integer, Integer, Integer, Integer, Integer, FilePath)
 
 fastModExp :: Integer -> Integer -> Integer -> Integer
 fastModExp x 1 n = mod x n
-fastModExp x e n | mod e 2 == 1 = mod (fastModExp x (e-1) n) n
+fastModExp x e n | mod e 2 == 1 = mod ((fastModExp x (e-1) n)*x) n
                  | otherwise    = mod ((fastModExp x (div e 2) n)^2) n
 
 inc2Tup :: (a,Integer) -> (a,Integer)
 inc2Tup (a,n) = (a,n+1)
+
+-- 4 914
 
 -- n, e, d, k = log_256(n), B = 2^(8*(k-1))
 -- access to (n,e) and oracle that says if y == x^d (mod n) is less than B
 --               e          c          n
 attackOAEP :: Info -> IO (Integer,Integer)
 attackOAEP info = do (f_1, q1) <- attackStep1 info
-                     putStr (show f_1 ++ "\n")
+                     putStr ("f_1: " ++ show f_1 ++ "\n")
                      (f_2, q2) <- attackStep2 f_1 info
-                     putStr (show f_2 ++ "\n")
+                     putStr ("f_2: " ++ show f_2 ++ "\n")
+                     putStr ("q_2: " ++ show q2 ++ "\n")
                      ((mn,mx), q3) <- attackStep3 f_2 info
                      if mn == mx then return (mn, q1+q2+q3)
-                     else undefined
+                     else do putStr (show mn ++ "\n")
+                             putStr (show mx ++ "\n\n")
+                             putStr (show (mx - mn) ++ "\n\n")
+                             return (mn, q1+q2+q3)
 
 attackStep1 :: Info -> IO (Integer,Integer)
 attackStep1 = attackStep1' 2
 --               f_1          e          c          n          B         f_1
 attackStep1' :: Integer -> Info -> IO (Integer,Integer)
 attackStep1' f_1 v@(e, c, n, b, l, f) = do ltb <- oracle (mod ((fastModExp f_1 e n)*c) n) v
-                                           --putStr (show ltb ++ "\n")
-                                           if (ltb == 2)
+                                           putStr (show ltb ++ ", ")
+                                           if (ltb == 1)
                                              then return (div f_1 2, 1)
                                              else do (f_1',inc) <- (attackStep1' (f_1*2) v)
                                                      return (f_1', inc + 1)
@@ -43,7 +49,8 @@ attackStep2 f v@(e, c, n, b, l, _) = attackStep2' ((div (n + b) b) * f) f v
 --              f_2         f_1/2             f_2
 attackStep2' :: Integer -> Integer -> Info -> IO (Integer,Integer)
 attackStep2' f_2 f v@(e, c, n, b, l, _) = do ltb <- oracle f_2 v
-                                             if (ltb == 2)
+                                             putStr (show ltb ++ "\n")
+                                             if (ltb == 1)
                                                then fmap inc2Tup (attackStep2' (f_2 + f) f v)
                                                else return (f_2,1)
                                   -- | oracle f_2 = attackStep2' (f_2 + f) f v
@@ -55,21 +62,24 @@ attackStep3 f_2 v@(e, c, n, b, l, f) = attackStep3' (((div n f_2) + 1), (div (n 
 
 attackStep3' :: (Integer,Integer) -> Info -> IO ((Integer,Integer),Integer)
 attackStep3' (mn,mx) v@(e, c, n, b, l, f) = do ltb <- oracle (f_3) v
-                                               if (ltb == 2)
+                                               if (ltb == 1)
                                                  then if (mx /= mx' && mn /= mx')
                                                             then fmap inc2Tup (attackStep3' (mn, mx') v)
-                                                            else return ((mn,mx'),1)
+                                                            else do putStr ("Diff:" ++ show (mx' - mn) ++ "\n")
+                                                                    return ((mn,mx'),1)
                                                  else if (mn /= mn' && mn' /= mx)
                                                             then fmap inc2Tup (attackStep3' (mn', mx) v)
-                                                            else return ((mn',mx),1)
+                                                            else do putStr("Diff:" ++ show (mx - mn') ++ "\n")
+                                                                    return ((mn',mx),1)
+
 --  | oracle (f_3) = attackStep3' (mn, (div (i*n + b) f_3)) v
 --                                       | otherwise = attackStep3' ((div (i*n + b) f_3) + 1,mx) v
                                   where
                                     f_tmp = div (2*b) (mx - mn)
                                     i     = div (f_tmp*mn) n
-                                    f_3   = 1 + (div (i*n) mn)
-                                    mx'   = div (i*n + b) f_3
-                                    mn'   = (div (i*n + b) f_3) + 1
+                                    f_3   = 1 + (div ((i*n) - 1) mn)
+                                    mx'   = div  (i*n + b) f_3
+                                    mn'   = 1 + (div  (i*n + b - 1) f_3)
 
 -- True iff '< B'
 oracle :: Integer -> Info -> IO Integer
@@ -85,23 +95,29 @@ interactExe f s = do (_,c,s) <- (readProcessWithExitCode f [] (s ++ "^C\n"))
 main :: IO ()
 main = do (dTemp:(conf:args)) <- getArgs
           dFile <- return ("./" ++ dTemp)
-          info <- getConf conf
+          info@(e, c, n, b, l, f) <- getConf conf
+          putStr ("b: " ++ show b ++ "\n")
           putStr (show info ++ "\n")
-          ot <- attackOAEP (combInfo info dFile)
-          prntScrn ot
+          ot@(m,_) <- attackOAEP (combInfo info dFile)
+          putStr ("hey\n\n")
+          putStr (show (fastModExp m e n) ++ "\n")
+          putStr (show c ++ "\n")
+          prntScrn ot info
 
 test :: Integer -> IO ()
-test n = do infoTemp <- getConf "22532.conf"
-            info <- return (combInfo infoTemp "./22532.D")
+test f = do infoTemp <- getConf "22532.conf"
+            info@(e,c,n,b,l,file) <- return (combInfo infoTemp "./22532.D")
+            k <- return (mod ((fastModExp f e n)*c) n)
             s <- oracle n info
             putStr (show s ++ "\n")
 
 combInfo :: Info -> FilePath -> Info
 combInfo (a,b,c,d,e,[]) fp = (a,b,c,d,e,fp)
 
-prntScrn :: (Integer,Integer) -> IO ()
-prntScrn (a,b) = do putStr (show a ++ "\n")
-                    putStr (show b ++ "\n")
+prntScrn :: (Integer,Integer) -> Info -> IO ()
+prntScrn (a,b) (_,ler,_,_,l,f) = do putStr (toOctet a lengthReq ++ "\n")
+                                    putStr (show b ++ "\n") where
+                        lengthReq = ceiling (logBase 16 (fromIntegral ler))
 
 -- gets the config information from the given file
 getConf :: FilePath -> IO Info
@@ -124,7 +140,7 @@ arrToInfo (n:e:l:c:xs) = (e,c,n,b,l,[]) where
 
 toOctet :: Integer -> Integer -> String
 toOctet n len = (take (fromIntegral requiredSize) (repeat '0')) ++ (toHex n) where
-  requiredSize = len - (ceiling ((logBase 16 (fromIntegral n)) + 1)) --reverse . toOctet'
+  requiredSize = len - (ceiling ((logBase 16 (fromIntegral n)))) --reverse . toOctet'
 
 toOctet' :: Integer -> String
 toOctet' 0 = []
